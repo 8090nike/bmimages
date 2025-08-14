@@ -6,8 +6,9 @@ name: Package Cleanup
 # The 'schedule' event uses cron syntax to trigger the workflow.
 # The cron expression below means "at midnight (00:00) every day".
 on:
-  schedule:
-    - cron: '5 * * * *'
+  # schedule:
+  #   - cron: '5 * * * *'
+  workflow_dispatch:
 
 # The workflow needs 'write' permissions on packages to delete them.
 permissions:
