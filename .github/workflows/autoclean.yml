@@ -1,13 +1,11 @@
 # This workflow automates the cleanup of old packages in the GitHub Container Registry.
-# It is scheduled to run daily at midnight UTC.
+# It is now configured to be triggered manually.
 
 name: Package Cleanup
 
-# The 'schedule' event uses cron syntax to trigger the workflow.
-# The cron expression below means "at midnight (00:00) every day".
+# The 'workflow_dispatch' event allows you to manually run the workflow.
+# You will find a "Run workflow" button on the Actions page for this workflow.
 on:
-  # schedule:
-  #   - cron: '5 * * * *'
   workflow_dispatch:
 
 # The workflow needs 'write' permissions on packages to delete them.
@@ -18,28 +16,26 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI
+      - name: Install GitHub CLI and jq
         run: |
-          # Ensure the gh CLI is installed, as it's not always available by default.
+          # The gh CLI and jq are needed for this script.
           sudo apt-get update
-          sudo apt-get install -y gh
+          sudo apt-get install -y gh jq
 
       - name: Clean up all old package versions
+        # We define environment variables here, but explicitly avoid passing GITHUB_TOKEN
+        # to prevent conflicts with the gh auth login command.
         env:
-          # Your GitHub Personal Access Token (PAT) with `read:packages` and `delete:packages` scopes.
-          # You should store this as a repository secret.
-          GITHUB_TOKEN: ${{ secrets.PAT_WITH_DELETE_PACKAGES }}
           # The name of your GitHub organization or user account.
           GITHUB_OWNER: '8090nike'
-          # The number of recent versions to keep for each package.
-          MIN_VERSIONS_TO_KEEP: 10
         run: |
           # Log in to GitHub CLI using the PAT.
-          echo "$GITHUB_TOKEN" | gh auth login --with-token
+          # We pipe the token directly to the command to avoid the environment variable conflict.
+          echo "${{ secrets.PAT_WITH_DELETE_PACKAGES }}" | gh auth login --with-token
 
           # Get a list of all packages in the organization/user account.
           # The `jq` command extracts just the package names.
-          package_names=$(gh api --method GET -H "Accept: application/vnd.github.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages?package_type=container --jq '.[].name')
+          package_names=$(gh api --method GET -H "Accept: application/vnd.github.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages?package_type=container --jq '.[].name' -q)
 
           echo "Found packages: $package_names"
           
@@ -48,9 +44,9 @@ jobs:
             echo "Processing package: $package_name"
 
             # Get all versions for the current package, sorted by creation date.
-            # We'll get the ID and creation date for each version.
-            versions_to_delete=$(gh api --method GET -H "Accept: application/vnd.github.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages/container/${package_name}/versions --jq --raw-output \
-              ". | sort_by(.created_at) | reverse | .[${{ env.MIN_VERSIONS_TO_KEEP }}:] | .[].id")
+            # This time, we get all versions *except* the most recent one.
+            versions_to_delete=$(gh api --method GET -H "Accept: application/vnd.github.com.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages/container/${package_name}/versions --jq --raw-output \
+              ". | sort_by(.created_at) | reverse | .[1:] | .[].id")
 
             if [ -z "$versions_to_delete" ]; then
               echo "No versions to delete for package: $package_name"
@@ -60,7 +56,7 @@ jobs:
               # Loop through the version IDs to delete them one by one.
               for version_id in $versions_to_delete; do
                 echo "Deleting version $version_id for $package_name"
-                gh api --method DELETE -H "Accept: application/vnd.github.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages/container/${package_name}/versions/${version_id}
+                gh api --method DELETE -H "Accept: application/vnd.github.com.v3+json" /orgs/${{ env.GITHUB_OWNER }}/packages/container/${package_name}/versions/${version_id}
               done
             fi
             
